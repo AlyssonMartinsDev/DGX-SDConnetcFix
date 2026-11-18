@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\SD-Fix.ico</ApplicationIcon>
+    <AssemblyName>DGX - SD Connect Fix</AssemblyName>
+    <AssemblyTitle>DGX - SD Connect Fix</AssemblyTitle>
+    <Product>DGX - SD Connect Fix</Product>
+    <Version>1.0.3</Version>
+    <InformationalVersion>1.0.3</InformationalVersion>
+    <RootNamespace>Dgx.SdConnectFix</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\Link-C4-07-2026.dgxp" LogicalName="Dgx.SdConnectFix.Packages.LinkC4.07-2026" />
+    <EmbeddedResource Include="Assets\SDconnect-Toolkit-2.1.14.dgxp" LogicalName="Dgx.SdConnectFix.Packages.Toolkit" />
+    <EmbeddedResource Include="Assets\Toolkit-Libraries.dgxp" LogicalName="Dgx.SdConnectFix.Packages.ToolkitLibraries" />
+  </ItemGroup>
+</Project>
