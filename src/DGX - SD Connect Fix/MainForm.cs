@@ -85,7 +85,8 @@ internal sealed class MainForm : Form
         install.Click += async (_, _) =>
         {
             if (installation is not null)
-                await RunAction(progress => ToolkitInstaller.Install(installation.RootDirectory, password, progress));
+                await RunAction(progress => ToolkitInstaller.Install(installation.RootDirectory,
+                    installation.Edition == XentryEdition.DaimlerTruck, password, progress));
         };
         fix.Click += async (_, _) =>
         {

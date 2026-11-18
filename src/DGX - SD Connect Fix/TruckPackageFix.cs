@@ -9,11 +9,11 @@ internal static class TruckPackageFix
 {
     private static readonly string[] Configurations =
     [
-        "Xentry/XD_DT/bin/ReadFIN.cfg",
-        "Xentry/XD_DT/bin/GlobalSystemSettings_install.properties",
-        "Xentry/XD_DT/bin/XentryServices.xml",
-        "Xentry/XD_DT/bin/CAL.ini",
-        "DAS/bin/cal.ini"
+        TruckConfiguration.GlobalSettings,
+        TruckConfiguration.Services,
+        TruckConfiguration.AktServices,
+        TruckConfiguration.XentryCal,
+        TruckConfiguration.DasCal
     ];
 
     private sealed record FileSnapshot(string Target, string? Backup);
@@ -87,7 +87,7 @@ internal static class TruckPackageFix
 
         try
         {
-            Note($"ANTES | LEITURA do pacote Link C4, cinco configurações e manifesto de {pduFiles.Length} arquivos PDU64.");
+            Note($"ANTES | LEITURA do pacote Link C4, configurações locais e manifesto de {pduFiles.Length} arquivos PDU64.");
             Note($"ANTES | Destino: {root}. Backup: {backupRoot}");
             Directory.CreateDirectory(staging);
             pending.Add(installer);
@@ -98,10 +98,21 @@ internal static class TruckPackageFix
             foreach (string relative in Configurations)
             {
                 FileSnapshot snapshot = SaveOriginal(root, backupRoot, relative, Note);
+                if (snapshot.Backup is null)
+                {
+                    if (relative == TruckConfiguration.AktServices)
+                        continue;
+                    throw new FileNotFoundException($"Configuração local ausente: {relative}", snapshot.Target);
+                }
+
+                byte[] original = File.ReadAllBytes(snapshot.Backup);
+                byte[] updated = TruckConfiguration.Update(relative, original);
+                if (original.AsSpan().SequenceEqual(updated))
+                    continue;
+
                 string staged = Path.Combine(staging, $"config-{configurations.Count}");
                 pending.Add(staged);
-                GetEntry(archive, "config/" + relative).ExtractToFile(staged);
-                Note($"ANTES | LEITURA do recurso de configuração {relative}");
+                File.WriteAllBytes(staged, updated);
                 configurations.Add((snapshot, staged));
             }
 
@@ -112,10 +123,9 @@ internal static class TruckPackageFix
             foreach ((FileSnapshot snapshot, string staged) in configurations)
             {
                 EnsureClosed(isXentryRunning);
-                if (snapshot.Backup is not null)
-                    File.Replace(staged, snapshot.Target, null);
-                else
-                    File.Move(staged, snapshot.Target);
+                if (!File.ReadAllBytes(snapshot.Target).AsSpan().SequenceEqual(File.ReadAllBytes(snapshot.Backup!)))
+                    throw new IOException($"Configuração alterada durante a preparação: {snapshot.Target}");
+                File.Replace(staged, snapshot.Target, null);
                 modified.Add(snapshot);
                 Note($"ANTES | GRAVAÇÃO {snapshot.Target}");
             }
@@ -139,7 +149,7 @@ internal static class TruckPackageFix
             }
 
             ValidateSdconnectProfile(pdu);
-            Note("DEPOIS | Perfil Bosch contém a entrada SDconnect e aponta para a DLL ACTIA esperada.");
+            Note("DEPOIS | Perfil Bosch contém a DLL e os descritores ACTIA esperados.");
             Note("DEPOIS | Validação concluída. Backups preservados.");
             progress(95);
         }
@@ -233,13 +243,23 @@ internal static class TruckPackageFix
         XDocument profile = XDocument.Load(reader);
         XElement? entry = profile.Root?.Elements("MVCI_PDU_API")
             .FirstOrDefault(node => string.Equals((string?)node.Element("SHORT_NAME"), "SDConnect", StringComparison.OrdinalIgnoreCase));
-        string? library = (string?)entry?.Element("LIBRARY_FILE")?.Attribute("URI");
-        string expected = Path.Combine(pdu, "SDConnect", "PDUAPI_I+ME_ACTIA_XS.dll");
-        if (!string.Equals((string?)entry?.Element("SUPPLIER_NAME"), "I+ME ACTIA GmbH", StringComparison.OrdinalIgnoreCase)
-            || !Uri.TryCreate(library, UriKind.Absolute, out Uri? uri) || !uri.IsFile
-            || !string.Equals(uri.LocalPath, expected, StringComparison.OrdinalIgnoreCase)
-            || !File.Exists(expected))
-            throw new InvalidDataException("O instalador não deixou o perfil ACTIA no caminho esperado.");
+        if (!string.Equals((string?)entry?.Element("SUPPLIER_NAME"), "I+ME ACTIA GmbH", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("O instalador não deixou a entrada ACTIA no perfil Bosch.");
+
+        string directory = Path.Combine(pdu, "SDConnect");
+        CheckProfileFile("LIBRARY_FILE", "PDUAPI_I+ME_ACTIA_XS.dll");
+        CheckProfileFile("MODULE_DESCRIPTION_FILE", "MDF_I+ME_ACTIA_XS.xml");
+        CheckProfileFile("CABLE_DESCRIPTION_FILE", "CDF_I+ME_ACTIA_XS.xml");
+
+        void CheckProfileFile(string element, string file)
+        {
+            string expected = Path.Combine(directory, file);
+            string? value = (string?)entry?.Element(element)?.Attribute("URI");
+            if (!Uri.TryCreate(value, UriKind.Absolute, out Uri? uri) || !uri.IsFile
+                || !string.Equals(uri.LocalPath, expected, StringComparison.OrdinalIgnoreCase)
+                || !File.Exists(expected))
+                throw new InvalidDataException($"Arquivo ACTIA ausente ou caminho inválido no perfil: {expected}");
+        }
     }
 
     private static ZipArchiveEntry GetEntry(ZipArchive archive, string name) =>

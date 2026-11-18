@@ -1,10 +1,11 @@
 using System.Diagnostics;
+using Microsoft.Win32;
 
 namespace Dgx.SdConnectFix;
 
 internal static class ToolkitInstaller
 {
-    internal static void Install(string installationRoot, char[] password, Action<int> progress)
+    internal static void Install(string installationRoot, bool isTruck, char[] password, Action<int> progress)
     {
         if (XentryProcesses.IsRunning())
             throw new InvalidOperationException("Feche o XENTRY antes de instalar o Toolkit.");
@@ -25,7 +26,7 @@ internal static class ToolkitInstaller
 
         try
         {
-            InstallCore(installationRoot, password, progress);
+            InstallCore(installationRoot, isTruck, password, progress);
         }
         finally
         {
@@ -33,7 +34,7 @@ internal static class ToolkitInstaller
         }
     }
 
-    private static void InstallCore(string installationRoot, char[] password, Action<int> progress)
+    private static void InstallCore(string installationRoot, bool isTruck, char[] password, Action<int> progress)
     {
         string directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
             $".dgx-toolkit-{Guid.NewGuid():N}");
@@ -63,6 +64,8 @@ internal static class ToolkitInstaller
 
             RunAndWait(registration, "Registro do TkServer");
             DiagnosticLog.Write($"TkServer registrado a partir de {registration.WorkingDirectory}.");
+            if (isTruck)
+                AuditTruckRegistration(installationRoot, windowsDirectory);
             progress(95);
             backup.Discard();
         }
@@ -109,6 +112,56 @@ internal static class ToolkitInstaller
             UseShellExecute = false,
             CreateNoWindow = true
         };
+
+    private static void AuditTruckRegistration(string installationRoot, string windowsDirectory)
+    {
+        const string toolkitClass = @"SOFTWARE\Classes\CLSID\{BFDC0FA8-4AB8-41DE-9615-2542A7DAB30E}\LocalServer32";
+        AuditArchitecture(RegistryView.Registry64, "bin", "System32");
+        AuditArchitecture(RegistryView.Registry32, "binx86", "SysWOW64");
+
+        void AuditArchitecture(RegistryView view, string serverFolder, string libraryFolder)
+        {
+            try
+            {
+                string server = Path.Combine(installationRoot, "SDconnect Toolkit", serverFolder, "TkServer.exe");
+                using var hive = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+                using var key = hive.OpenSubKey(toolkitClass);
+                string? command = key?.GetValue(null) as string;
+                string? registered = ReadExecutablePath(command);
+                string serverVersion = ReadVersion(server);
+                string apiVersion = ReadVersion(Path.Combine(windowsDirectory, libraryFolder, "ToolkitApiDll.dll"));
+                string traceVersion = ReadVersion(Path.Combine(windowsDirectory, libraryFolder, "ToolkitTrace.dll"));
+                bool matches = string.Equals(registered, server, StringComparison.OrdinalIgnoreCase)
+                    && serverVersion != "indisponível" && serverVersion == apiVersion && serverVersion == traceVersion;
+                DiagnosticLog.Write($"Toolkit {view}: {(matches ? "conferido" : "ATENÇÃO: divergência")}. " +
+                    $"COM: {registered ?? "(ausente)"}; esperado: {server}; " +
+                    $"servidor: {serverVersion}; API: {apiVersion}; trace: {traceVersion}.");
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+            {
+                DiagnosticLog.Write($"Não foi possível conferir o registro Toolkit {view}: {error.Message}");
+            }
+        }
+    }
+
+    private static string ReadVersion(string path)
+    {
+        if (!File.Exists(path))
+            return "indisponível";
+        FileVersionInfo info = FileVersionInfo.GetVersionInfo(path);
+        return string.IsNullOrWhiteSpace(info.FileVersion)
+            ? "indisponível"
+            : $"{info.FileMajorPart}.{info.FileMinorPart}.{info.FileBuildPart}.{info.FilePrivatePart}";
+    }
+
+    private static string? ReadExecutablePath(string? command)
+    {
+        if (string.IsNullOrWhiteSpace(command))
+            return null;
+        command = command.Trim();
+        int suffix = command.IndexOf(".exe", StringComparison.OrdinalIgnoreCase);
+        return suffix < 0 ? null : command[..(suffix + 4)].TrimStart('"');
+    }
 
     internal static void RunAndWait(ProcessStartInfo start, string step)
     {
